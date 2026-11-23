@@ -219,7 +219,23 @@ function renderSignList() {
   }
 }
 
+// מתקן את המילה: "a" → "A" אם קיים סימן A, ו-"BOX" בלי פסיקים → B,O,X
+function fixWord(tokens) {
+  const keys = Object.keys(db.signs);
+  const find = (t) => db.signs[t] ? t : keys.find((k) => k.toLowerCase() === t.toLowerCase());
+  const out = [];
+  for (const t of tokens) {
+    if (find(t)) { out.push(find(t)); continue; }
+    const chars = [...t.replace(/\s+/g, "")];
+    if (chars.length > 1 && chars.every((c) => find(c))) out.push(...chars.map(find));
+    else out.push(t);
+  }
+  return out;
+}
+
 function validateWord() {
+  db.word = fixWord(db.word);
+  saveDb();
   const missing = db.word.filter((w) => !db.signs[w]);
   $("wordError").textContent = db.word.length === 0
     ? "עוד לא הוגדרה מילה"
@@ -251,8 +267,15 @@ const game = {
   },
 
   start() {
-    if (db.word.length === 0 || db.word.some((w) => !db.signs[w])) {
-      setMsg("צריך להגדיר מילה ולהקליט את כל הסימנים במסך האימון", "lose");
+    if (db.word.length === 0) {
+      setMsg("עוד לא הוגדרה מילה. כתבו אותה במסך האימון, בסעיף 2", "lose");
+      return;
+    }
+    const missing = db.word.filter((w) => !db.signs[w]);
+    if (missing.length) {
+      setMsg(Object.keys(db.signs).length === 0
+        ? "האתר עוד לא מכיר אף סימן. במסך האימון לחצו \"טעינת אותיות ASL\" או הקליטו סימנים"
+        : `האתר לא מכיר את: ${missing.join(", ")}. הקליטו אותו במסך האימון או טענו את אותיות ASL`, "lose");
       return;
     }
     this.reset();
