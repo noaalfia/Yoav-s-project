@@ -46,24 +46,41 @@ let landmarker = null;
 let drawer = null;
 
 async function initVision() {
+  // 1. קודם מצלמה — כדי שתמיד תראו תמונה, גם אם המודל נכשל
   try {
-    const files = await FilesetResolver.forVisionTasks("./lib/wasm");
-    landmarker = await HandLandmarker.createFromOptions(files, {
-      baseOptions: { modelAssetPath: "./models/hand_landmarker.task", delegate: "GPU" },
-      runningMode: "VIDEO",
-      numHands: 2,
-    });
-    drawer = new DrawingUtils(ctx);
-    $("camStatus").textContent = "מבקש גישה למצלמה…";
+    $("camStatus").textContent = "מבקש גישה למצלמה… לחצו 'אפשר' בחלון שנפתח";
     const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
     video.srcObject = stream;
     await video.play();
-    $("camStatus").textContent = "המצלמה פועלת ✔";
+  } catch (err) {
+    console.error(err);
+    $("camStatus").textContent = err.name === "NotAllowedError"
+      ? "אין הרשאה למצלמה. לחצו על סמל המנעול/המצלמה בשורת הכתובת ← אפשר מצלמה, ורעננו."
+      : err.name === "NotFoundError"
+      ? "לא נמצאה מצלמה במחשב."
+      : err.name === "NotReadableError"
+      ? "המצלמה תפוסה על ידי תוכנה אחרת (Zoom, Teams, לשונית אחרת). סגרו אותה ורעננו."
+      : "שגיאת מצלמה: " + err.message;
+    return;
+  }
+
+  // 2. אחר כך המודל. קודם GPU, ואם נכשל — מעבד רגיל
+  $("camStatus").textContent = "המצלמה פועלת. טוען מודל זיהוי ידיים…";
+  try {
+    const files = await FilesetResolver.forVisionTasks("./lib/wasm");
+    const make = (delegate) => HandLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: "./models/hand_landmarker.task", delegate },
+      runningMode: "VIDEO",
+      numHands: 2,
+    });
+    try { landmarker = await make("GPU"); }
+    catch (e) { console.warn("GPU נכשל, עובר ל-CPU", e); landmarker = await make("CPU"); }
+    drawer = new DrawingUtils(ctx);
+    $("camStatus").textContent = "המצלמה והזיהוי פועלים ✔";
     requestAnimationFrame(loop);
   } catch (err) {
     console.error(err);
-    $("camStatus").textContent = "שגיאה: " + err.message +
-      " — ודאו שהאתר רץ דרך שרת מקומי (ראו README) ושנתתם הרשאת מצלמה.";
+    $("camStatus").textContent = "המצלמה פועלת, אבל המודל לא נטען: " + err.message;
   }
 }
 
