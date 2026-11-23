@@ -20,8 +20,7 @@ const RECORD_MS = 3000;      // משך הקלטה באימון
 const STORAGE_KEY = "bomb-signs-v1";
 
 // ---------- מצב שמור ----------
-const defaults = { signs: {}, asl: [], word: [], threshold: 1.0, timeLimit: 60, strict: false };
-// asl = רשימת אותיות שהדוגמאות שלהן הגיעו מהסט המוכן (ולא מהקלטה שלך)
+const defaults = { signs: {}, word: [], threshold: 1.0, timeLimit: 60, strict: false };
 let db = loadDb();
 
 function loadDb() {
@@ -207,13 +206,7 @@ function handleRecording(vec) {
   $("bigCountdown").textContent = "";
   $("recordBtn").disabled = false;
   if (samples.length === 0) { alert("לא זוהתה יד בזמן ההקלטה. נסו שוב."); return; }
-  if (db.asl.includes(name)) {
-    // ההקלטה שלך מחליפה את הדוגמאות המוכנות של האות הזאת
-    db.signs[name] = samples;
-    db.asl = db.asl.filter((x) => x !== name);
-  } else {
-    db.signs[name] = (db.signs[name] || []).concat(samples);
-  }
+  db.signs[name] = (db.signs[name] || []).concat(samples);
   saveDb();
   renderSignList();
   validateWord();
@@ -229,7 +222,7 @@ function renderSignList() {
   }
   for (const name of names) {
     const li = document.createElement("li");
-    li.innerHTML = `<b></b><span>${db.signs[name].length} דוגמאות · ${db.asl.includes(name) ? "מוכן (ASL)" : "ההקלטה שלך ✔"}</span>`;
+    li.innerHTML = `<b></b><span>${db.signs[name].length} דוגמאות</span>`;
     li.querySelector("b").textContent = name;
     const del = document.createElement("button");
     del.textContent = "מחק";
@@ -490,10 +483,8 @@ $("loadAslBtn").onclick = async () => {
   try {
     const pack = await (await fetch("./models/asl-signs.json")).json();
     for (const [letter, vecs] of Object.entries(pack.signs)) {
-      // אות שהקלטת בעצמך לא נדרסת. אות מוכנה שנטענה קודם מתחלפת בגרסה המעודכנת
-      if (db.signs[letter] && !db.asl.includes(letter)) continue;
-      db.signs[letter] = vecs.map((v) => (pack.oneHand ? v.concat(new Array(64).fill(0)) : v));
-      if (!db.asl.includes(letter)) db.asl.push(letter);
+      const full = vecs.map((v) => (pack.oneHand ? v.concat(new Array(64).fill(0)) : v));
+      db.signs[letter] = (db.signs[letter] || []).concat(full);
     }
     if (db.word.length === 0) {
       db.word = ["B", "O", "X"];
