@@ -147,3 +147,7 @@ main {
 
 .setting { display: grid; gap: 6px; margin: 10px 0; }
 .setting.checkbox { display: flex; align-items: center; gap: 8px; }
+
+.ref { margin: 8px 0 4px; }
+.ref summary { cursor: pointer; color: var(--blue); }
+.ref img { width: 100%; border-radius: 8px; margin-top: 8px; }

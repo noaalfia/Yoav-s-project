@@ -1,0 +1,28 @@
+<!-- כלי עזר: חילוץ נקודות ידיים מתמונות. מריצים משרת שבו יש lib/, models/ (מתוך web/), data/<אות>/<תמונות> ו-list.json -->
+<!doctype html><meta charset="utf-8"><body><script type="module">
+import { FilesetResolver, HandLandmarker } from "./lib/vision_bundle.mjs";
+const files = await FilesetResolver.forVisionTasks("./lib/wasm");
+const lm = await HandLandmarker.createFromOptions(files, {
+  baseOptions: { modelAssetPath: "./models/hand_landmarker.task", delegate: "CPU" },
+  runningMode: "IMAGE", numHands: 1, minHandDetectionConfidence: 0.3 });
+const list = await (await fetch("list.json")).json();
+const c = document.createElement("canvas"); c.width = c.height = 320;
+const ctx = c.getContext("2d");
+const out = {}; const log = [];
+for (const [L, fs] of Object.entries(list)) {
+  out[L] = [];
+  for (const f of fs) {
+    const img = new Image(); img.src = `data/${L}/${f}`; await img.decode();
+    // pad: replicate background colour around the hand
+    ctx.fillStyle = "#c8c8c8"; ctx.fillRect(0,0,320,320);
+    ctx.drawImage(img, 0, 0, 50, 50, 0, 0, 320, 320);
+    ctx.drawImage(img, 60, 60, 200, 200);
+    const r = lm.detect(c);
+    if (r.landmarks.length) out[L].push({ side: r.handedness[0][0].categoryName,
+      pts: r.landmarks[0].map(p => [+p.x.toFixed(5), +p.y.toFixed(5), +p.z.toFixed(5)]) });
+    if (out[L].length >= 120) break;
+  }
+  log.push(`${L}: ${out[L].length}`);
+}
+window.RESULT = out; window.LOG = log; window.DONE = true;
+</script>

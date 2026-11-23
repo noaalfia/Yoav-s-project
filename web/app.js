@@ -67,24 +67,34 @@ async function initVision() {
   }
 }
 
-// הופך את נקודות הידיים לוקטור מספרים קבוע באורך 128
-// מקום 0 = יד שמאל, מקום 1 = יד ימין. יד שלא נמצאה = אפסים.
-function toFeatures(result) {
-  const vec = new Array(2 * 64).fill(0);
-  if (!result.landmarks || result.landmarks.length === 0) return null;
-  result.landmarks.forEach((pts, i) => {
-    const side = result.handedness?.[i]?.[0]?.categoryName === "Right" ? 1 : 0;
-    const wrist = pts[0];
-    const mid = pts[9]; // בסיס האצבע האמצעית — משמש כ"סרגל" לגודל היד
-    const scale = Math.hypot(mid.x - wrist.x, mid.y - wrist.y, mid.z - wrist.z) || 1;
-    const off = side * 64;
-    pts.forEach((p, j) => {
-      vec[off + j * 3]     = (p.x - wrist.x) / scale;
-      vec[off + j * 3 + 1] = (p.y - wrist.y) / scale;
-      vec[off + j * 3 + 2] = (p.z - wrist.z) / scale;
-    });
-    vec[off + 63] = 3; // "דגל" שהיד הזאת קיימת — מבדיל בין סימן ביד אחת לשתי ידיים
+// הופך את נקודות הידיים לוקטור מספרים קבוע באורך 128.
+// יד אחת: תמיד במקום 0, ואם זו יד שמאל — הופכים אותה (מראה) כדי שתיראה כמו יד ימין.
+//         ככה אפשר לסמן בכל יד, וגם הסט המוכן של ASL מתאים לשתי הידיים.
+// שתי ידיים: מקום 0 = שמאל, מקום 1 = ימין.
+// (אם משנים כאן משהו — צריך לייצר מחדש את models/asl-signs.json, ראו tools/build-asl.js)
+function handVec(vec, off, pts, mirror) {
+  const wrist = pts[0];
+  const mid = pts[9]; // בסיס האצבע האמצעית — משמש כ"סרגל" לגודל היד
+  const scale = Math.hypot(mid.x - wrist.x, mid.y - wrist.y, mid.z - wrist.z) || 1;
+  const sx = mirror ? -1 : 1;
+  pts.forEach((p, j) => {
+    vec[off + j * 3]     = sx * (p.x - wrist.x) / scale;
+    vec[off + j * 3 + 1] = (p.y - wrist.y) / scale;
+    vec[off + j * 3 + 2] = (p.z - wrist.z) / scale;
   });
+  vec[off + 63] = 3; // "דגל" שהיד הזאת קיימת — מבדיל בין סימן ביד אחת לשתי ידיים
+}
+
+function toFeatures(result) {
+  const hands = result.landmarks || [];
+  if (hands.length === 0) return null;
+  const sideOf = (i) => result.handedness?.[i]?.[0]?.categoryName || "Right";
+  const vec = new Array(2 * 64).fill(0);
+  if (hands.length === 1) {
+    handVec(vec, 0, hands[0], sideOf(0) === "Left");
+  } else {
+    hands.slice(0, 2).forEach((pts, i) => handVec(vec, sideOf(i) === "Right" ? 64 : 0, pts, false));
+  }
   return vec;
 }
 
@@ -426,6 +436,32 @@ document.querySelectorAll(".tab").forEach((btn) => {
     $("tab-train").classList.toggle("hidden", btn.dataset.tab !== "train");
   };
 });
+
+// טעינת הסט המוכן של ASL (נוסף לסימנים שכבר הוקלטו, לא מוחק אותם)
+$("loadAslBtn").onclick = async () => {
+  $("aslStatus").textContent = "טוען…";
+  try {
+    const pack = await (await fetch("./models/asl-signs.json")).json();
+    for (const [letter, vecs] of Object.entries(pack.signs)) {
+      const full = vecs.map((v) => (pack.oneHand ? v.concat(new Array(64).fill(0)) : v));
+      db.signs[letter] = (db.signs[letter] || []).concat(full);
+    }
+    if (db.word.length === 0) {
+      db.word = ["B", "O", "X"];
+      $("wordInput").value = db.word.join(",");
+    }
+    if (db.threshold < 2.5) {
+      db.threshold = 2.5; // יד של אדם אחר רחוקה יותר מהדוגמאות — רף סלחני יותר
+      $("threshold").value = db.threshold;
+      $("thresholdVal").textContent = db.threshold;
+    }
+    saveDb(); renderSignList(); validateWord();
+    $("aslStatus").textContent = `נטענו ${Object.keys(pack.signs).length} אותיות ✔`;
+  } catch (e) {
+    console.error(e);
+    $("aslStatus").textContent = "הטעינה נכשלה. ודאו שהאתר רץ דרך שרת ולא מקובץ.";
+  }
+};
 
 $("connectBtn").onclick = () => serial.connect();
 $("startBtn").onclick = () => game.start();
