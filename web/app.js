@@ -21,19 +21,77 @@ const STORAGE_KEY = "bomb-signs-v1";
 
 // ---------- מצב שמור ----------
 const defaults = { signs: {}, word: [], threshold: 1.0, timeLimit: 60, strict: false };
-let db = loadDb();
+// שמירה ב-IndexedDB (מקום של מאות MB). פעם היה localStorage, שמוגבל ל-~5MB
+// ונגמר אחרי 30–40 הקלטות — אז השמירה נכשלה בשקט וההקלטות "נעלמו".
+const IDB_NAME = "bomb-signs";
+const IDB_STORE = "kv";
 
-function loadDb() {
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbGet(key) {
+  const idb = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const req = idb.transaction(IDB_STORE).objectStore(IDB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSet(key, value) {
+  const idb = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = idb.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+async function loadDb() {
+  try {
+    const saved = await idbGet("db");
+    if (saved) return { ...defaults, ...saved };
+  } catch (e) { console.warn("IndexedDB לא זמין", e); }
+  // מעבר חד-פעמי מהשמירה הישנה
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return { ...defaults, ...JSON.parse(raw) };
   } catch (e) { /* אין גישה לאחסון — מתחילים ריק */ }
   return structuredClone(defaults);
 }
+
+let saveTimer = null;
 function saveDb() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }
-  catch (e) { console.warn("לא הצלחתי לשמור בדפדפן", e); }
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, 300); // כמה שינויים ברצף = שמירה אחת
 }
+async function saveNow() {
+  clearTimeout(saveTimer);
+  try {
+    await idbSet("db", db);
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* לא חשוב */ }
+    showSaveError("");
+    return true;
+  } catch (e) {
+    console.error("השמירה נכשלה", e);
+    showSaveError("⚠️ השמירה בדפדפן נכשלה, וההקלטות האחרונות לא יישמרו אחרי רענון. לחצו \"שמירה לקובץ\" עכשיו כדי לא לאבד אותן.");
+    return false;
+  }
+}
+function showSaveError(msg) {
+  const el = document.getElementById("saveStatus");
+  if (el) el.textContent = msg;
+}
+// מקטין כל דוגמה פי ~3 (3 ספרות אחרי הנקודה מספיקות לזיהוי)
+const round3 = (v) => v.map((x) => Math.round(x * 1000) / 1000);
+
+let db = await loadDb();
 
 // ---------- אלמנטים ----------
 const $ = (id) => document.getElementById(id);
@@ -206,8 +264,8 @@ function handleRecording(vec) {
   $("bigCountdown").textContent = "";
   $("recordBtn").disabled = false;
   if (samples.length === 0) { alert("לא זוהתה יד בזמן ההקלטה. נסו שוב."); return; }
-  db.signs[name] = (db.signs[name] || []).concat(samples);
-  saveDb();
+  db.signs[name] = (db.signs[name] || []).concat(samples.map(round3));
+  saveNow();
   renderSignList();
   validateWord();
 }
@@ -538,16 +596,20 @@ $("exportBtn").onclick = () => {
 $("importInput").onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  let data;
   try {
-    db = { ...defaults, ...JSON.parse(await file.text()) };
-    saveDb();
-    location.reload();
-  } catch { alert("הקובץ לא תקין"); }
+    data = JSON.parse(await file.text());
+    if (!data || typeof data.signs !== "object") throw new Error("no signs");
+  } catch { alert("הקובץ לא תקין. צריך לבחור קובץ ששמרתם עם \"שמירה לקובץ\" (bomb-signs.json)."); return; }
+  for (const k of Object.keys(data.signs)) data.signs[k] = data.signs[k].map(round3);
+  db = { ...defaults, ...data };
+  if (!(await saveNow())) return; // ההודעה כבר מוצגת
+  location.reload();
 };
-$("clearBtn").onclick = () => {
+$("clearBtn").onclick = async () => {
   if (!confirm("למחוק את כל הסימנים וההגדרות?")) return;
   db = structuredClone(defaults);
-  saveDb();
+  await saveNow();
   location.reload();
 };
 
